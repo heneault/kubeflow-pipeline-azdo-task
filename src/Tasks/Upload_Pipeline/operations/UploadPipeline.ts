@@ -197,10 +197,12 @@ export class UploadPipeline implements IUploadPipeline {
             var uploadFile = fs.createReadStream(this.pipelineFilePath);
             var form: FormData = new FormData();
             form.append('uploadfile', uploadFile);
-            var reqHost = new URL(this.endpointUrl).host;
+            var url = new URL(this.endpointUrl);
+            var reqHost = url.hostname;
+            var reqPort = Number.parseInt(url.port) > 0 ? url.port : (url.protocol == 'https:' ? 443 : 80);
 
             var reqHeaders = form.getHeaders({ 'authorization': `Bearer ${this.bearerToken}` });
-            await this.newPLPostRequest(reqHeaders, reqHost, form);
+            await this.newPLPostRequest(reqHeaders, reqHost, reqPort, form);
             await this.wait(5000);
             var pipelineID = await this.getPipelineID(this.newPipelineName);
             if (pipelineID == 'Not a valid pipeline id.') {
@@ -214,7 +216,7 @@ export class UploadPipeline implements IUploadPipeline {
         }
     }
 
-    public async newPLPostRequest(reqHeaders: OutgoingHttpHeaders, reqHost: string, form: FormData) {
+    public async newPLPostRequest(reqHeaders: OutgoingHttpHeaders, reqHost: string, reqPort: number, form: FormData) {
         var path = encodeURI(`${this.getAllPipelinesEndpoint}/upload?name=${this.newPipelineName}&description=${this.newPipelineDescription}`)
         task.debug(`Posting pipeline request to ${this.endpointUrl}${path}`);
         var req = request(
@@ -223,6 +225,7 @@ export class UploadPipeline implements IUploadPipeline {
                 path: path,
                 method: 'POST',
                 headers: reqHeaders,
+                port: reqPort
             },
             response => {
                 try {
@@ -245,14 +248,16 @@ export class UploadPipeline implements IUploadPipeline {
             var uploadFile = fs.createReadStream(this.pipelineFilePath);
             var form: FormData = new FormData();
             form.append('uploadfile', uploadFile);
-            var reqHost = new URL(this.endpointUrl).host;
+            var url = new URL(this.endpointUrl);
+            var reqHost = url.hostname;
+            var reqPort = Number.parseInt(url.port) > 0 ? url.port : (url.protocol == 'https:' ? 443 : 80);
             var existingPLID = await this.getPipelineID(this.existingPipelineName);
             if (existingPLID == 'Not a valid pipeline id.') {
                 throw new Error('Existing pipeline not found. Check endpoint url. Either choose an existing pipeline or create a new pipeline.');
             }
 
             var reqHeaders = form.getHeaders({ 'authorization': `Bearer ${this.bearerToken}` });
-            await this.newVersionPostRequest(reqHeaders, reqHost, form, existingPLID);
+            await this.newVersionPostRequest(reqHeaders, reqHost, reqPort, form, existingPLID);
             await this.wait(5000);
             var versionID = await this.getPipelineVersionID(existingPLID);
             if (versionID == 'Not a valid version id.') {
@@ -290,7 +295,7 @@ export class UploadPipeline implements IUploadPipeline {
         }
     }
 
-    public async newVersionPostRequest(reqHeaders: OutgoingHttpHeaders, reqHost: string, form: FormData, existingPLID: string) {
+    public async newVersionPostRequest(reqHeaders: OutgoingHttpHeaders, reqHost: string, reqPort: number, form: FormData, existingPLID: string) {
         var path = encodeURI(`${this.getAllPipelinesEndpoint}/upload_version?name=${this.versionName}&pipelineid=${existingPLID}`);
         task.debug(`Posting pipeline version request to ${this.endpointUrl}${path}`);
         var req = request(
@@ -299,6 +304,7 @@ export class UploadPipeline implements IUploadPipeline {
                 path: path,
                 method: 'POST',
                 headers: reqHeaders,
+                port: reqPort
             },
             response => {
                 try {
