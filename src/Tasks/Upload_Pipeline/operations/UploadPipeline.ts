@@ -199,7 +199,7 @@ export class UploadPipeline implements IUploadPipeline {
             form.append('uploadfile', uploadFile);
             var url = new URL(this.endpointUrl);
             var reqHost = url.hostname;
-            var reqPort = Number.parseInt(url.port) > 0 ? url.port : (url.protocol == 'https:' ? 443 : 80);
+            var reqPort = Number.parseInt(url.port) > 0 ? Number.parseInt(url.port) : (url.protocol == 'https:' ? 443 : 80);
 
             var reqHeaders = form.getHeaders({ 'authorization': `Bearer ${this.bearerToken}` });
             await this.newPLPostRequest(reqHeaders, reqHost, reqPort, form);
@@ -250,7 +250,7 @@ export class UploadPipeline implements IUploadPipeline {
             form.append('uploadfile', uploadFile);
             var url = new URL(this.endpointUrl);
             var reqHost = url.hostname;
-            var reqPort = Number.parseInt(url.port) > 0 ? url.port : (url.protocol == 'https:' ? 443 : 80);
+            var reqPort = Number.parseInt(url.port) > 0 ? Number.parseInt(url.port) : (url.protocol == 'https:' ? 443 : 80);
             var existingPLID = await this.getPipelineID(this.existingPipelineName);
             if (existingPLID == 'Not a valid pipeline id.') {
                 throw new Error('Existing pipeline not found. Check endpoint url. Either choose an existing pipeline or create a new pipeline.');
