@@ -12,6 +12,8 @@ export class Experiment {
     public getAllExperimentsEndpoint: string;
     public restAPIClient: rest.RestClient;
     private bearerToken: string;
+    private userId: string;
+    private namespace: string;
 
     constructor() {
         this.endpointUrl = task.getInput('kubeflowEndpoint', true)!;
@@ -22,11 +24,26 @@ export class Experiment {
         this.getAllExperimentsEndpoint = '/pipeline/apis/v1beta1/experiments';
         this.restAPIClient = new rest.RestClient('agent');
         this.bearerToken = task.getInput('bearerToken', false)!;
+        this.userId = task.getInput('userId', false)!;
+        this.namespace = task.getInput('namespace', false)!;
+    }
+
+    private getAuthenticationHeader()
+    {
+        if (this.userId != undefined && this.userId != null) {
+            return {'kubeflow-userid': `${this.userId}`}
+        }
+        else if (this.bearerToken != undefined && this.bearerToken != null) {
+            return { 'authorization': `Bearer ${this.bearerToken}` }
+        }
+        else {
+            throw new Error('either userId or bearerToken must be set.');
+        }
     }
 
     public async validateEndpointUrl() {
         try {
-            var options: rest.IRequestOptions = { additionalHeaders: { 'authorization': `Bearer ${this.bearerToken}` } };
+            var options: rest.IRequestOptions = { additionalHeaders: this.getAuthenticationHeader() };
             task.debug(`Validating endpoint url ${this.endpointUrl}`);
             var req = await this.restAPIClient.get(this.endpointUrl, options);
             if (req.statusCode == 200) {
@@ -42,7 +59,17 @@ export class Experiment {
     public async validateName() {
         try {
             var url = `${this.endpointUrl}${this.getAllExperimentsEndpoint}`;
-            var options: rest.IRequestOptions = { additionalHeaders: { 'authorization': `Bearer ${this.bearerToken}` } };
+            var options: rest.IRequestOptions = { 
+                additionalHeaders: this.getAuthenticationHeader()
+            };
+            if (this.namespace != undefined && this.namespace != null) {
+                options.queryParameters =  {
+                    params: {
+                        'resource_reference_key.type': 'NAMESPACE',
+                        'resource_reference_key.id': 'common'
+                    }                
+                }
+            }            
             task.debug(`Loading experiment names from ${url}`);
             var webRequest = await this.restAPIClient.get<IAllExperiment>(url, options)!;
             if (webRequest.result != null) {
@@ -85,25 +112,38 @@ export class Experiment {
     //The payload that posting a new experiment takes follows this format as a string: {name: string, description: string}
     public async createExperiment() {
         try {
-            if (this.description == undefined || this.description == null) {
-                var form: string = JSON.stringify({ "name": this.name });
+            var form = { "name": this.name }
+            if (this.description != undefined && this.description != null) {
+                Object.assign(form, {"description": this.description});
             }
-            else {
-                var form: string = JSON.stringify({ "name": this.name, "description": this.description });
+            if (this.namespace != undefined && this.namespace != null) {
+                Object.assign(form, {"resource_references": [
+                    {
+                        "key": {
+                            "type": "NAMESPACE",
+                            "id": `${this.namespace}`
+                        },
+                        "relationship": "OWNER"
+                    }
+                ]});
             }
-            var reqHost = new URL(this.endpointUrl).host;
+
+            var url = new URL(this.endpointUrl);
+            var reqHost = url.hostname;
+            var reqPort = Number.parseInt(url.port) > 0 ? Number.parseInt(url.port) : (url.protocol == 'https:' ? 443 : 80);
+
             var reqHeaders = {
-                'authorization': `Bearer ${this.bearerToken}`,
                 'content-type': 'application/json'
             }
-            await this.postRequest(reqHost, form, reqHeaders);
+            Object.assign(reqHeaders, this.getAuthenticationHeader());
+            await this.postRequest(reqHost, reqPort, JSON.stringify(form), reqHeaders);
         }
         catch (error) {
             task.setResult(task.TaskResult.Failed, error.message);
         }
     }
 
-    public async postRequest(reqHost: string, form: string, reqHeaders: OutgoingHttpHeaders) {
+    public async postRequest(reqHost: string, reqPort: number, form: string, reqHeaders: OutgoingHttpHeaders) {
         task.debug(`Posting experiment request to ${this.endpointUrl}${this.getAllExperimentsEndpoint}`)
         var req = request(
             {
@@ -111,6 +151,7 @@ export class Experiment {
                 path: `${this.getAllExperimentsEndpoint}`,
                 method: 'POST',
                 headers: reqHeaders,
+                port: reqPort
             },
             response => {
                 try {

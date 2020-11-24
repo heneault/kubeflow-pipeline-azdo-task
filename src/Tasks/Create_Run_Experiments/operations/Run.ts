@@ -28,6 +28,8 @@ export class Run {
     public runID: string;
     public restAPIClient: rest.RestClient;
     private bearerToken: string;
+    private userId: string;
+    private namespace: string;
 
     constructor() {
         this.endpointUrl = task.getInput('KubeflowEndpoint', true)!;
@@ -59,11 +61,26 @@ export class Run {
         this.runID = '';
         this.restAPIClient = new rest.RestClient('agent');
         this.bearerToken = task.getInput('bearerToken', false)!;
+        this.userId = task.getInput('userId', false)!;
+        this.namespace = task.getInput('namespace', false)!;
+    }
+
+    private getAuthenticationHeader()
+    {
+        if (this.userId != undefined && this.userId != null) {
+            return {'kubeflow-userid': `${this.userId}`}
+        }
+        else if (this.bearerToken != undefined && this.bearerToken != null) {
+            return { 'authorization': `Bearer ${this.bearerToken}` }
+        }
+        else {
+            throw new Error('either userId or bearerToken must be set.');
+        }
     }
 
     public async validateEndpointUrl() {
         try {
-            var options: rest.IRequestOptions = { additionalHeaders: { 'authorization': `Bearer ${this.bearerToken}` } };
+            var options: rest.IRequestOptions = { additionalHeaders: this.getAuthenticationHeader() };
             var req = await this.restAPIClient.get(this.endpointUrl, options);
             if (req.statusCode == 200) {
                 return true;
@@ -190,21 +207,26 @@ export class Run {
                 var form = `{"name": "${this.runName}", "description": "${this.description}",
                 "pipeline_spec": {"parameters": []},
                 "resource_references": [{"key": {"id": "${this.experimentID}", "type": "EXPERIMENT"}, "relationship": "OWNER"},
-                {"key": {"id": "${this.pipelineVersionID}", "type": "PIPELINE_VERSION"}, "relationship": "CREATOR"}]}`;
+                {"key": {"id": "${this.pipelineVersionID}", "type": "PIPELINE_VERSION"}, "relationship": "CREATOR"},
+                {"key": {"id": "${this.namespace}", "type": "NAMESPACE"}, "relationship": "OWNER"} ]}`;
             }
             else {
-                var form = `{"name": "${this.runName}", "description": "${this.description}", 
+                var form = `{"name": "${this.runName}", "description": "${this.description}",
                 "pipeline_spec": {"parameters": [${this.pipelineParams}]},
                 "resource_references": [{"key": {"id": "${this.experimentID}", "type": "EXPERIMENT"}, "relationship": "OWNER"},
-                {"key": {"id": "${this.pipelineVersionID}", "type": "PIPELINE_VERSION"}, "relationship": "CREATOR"}]}`;
+                {"key": {"id": "${this.pipelineVersionID}", "type": "PIPELINE_VERSION"}, "relationship": "CREATOR"},
+                {"key": {"id": "${this.namespace}", "type": "NAMESPACE"}, "relationship": "OWNER"} ]}`;
             }
 
-            var reqHost = new URL(this.endpointUrl).host;
             var reqHeaders = {
-                'authorization': `Bearer ${this.bearerToken}`,
                 'content-type': 'application/json'
             }
-            await this.postRequest(reqHost, form, reqHeaders);
+            Object.assign(reqHeaders, this.getAuthenticationHeader());
+            var url = new URL(this.endpointUrl);
+            var reqHost = url.hostname;
+            var reqPort = Number.parseInt(url.port) > 0 ? Number.parseInt(url.port) : (url.protocol == 'https:' ? 443 : 80);
+            
+            await this.postRequest(reqHost, reqPort, form, reqHeaders);
             await this.wait(10000);
             var runID = await this.getRunID();
             if (runID != 'Not a valid run id.') {
@@ -222,7 +244,7 @@ export class Run {
         }
     }
 
-    public async postRequest(reqHost: string, form: string, reqHeaders: OutgoingHttpHeaders) {
+    public async postRequest(reqHost: string, reqPort:number, form: string, reqHeaders: OutgoingHttpHeaders) {
         try {
             task.debug(`Posting run request to ${this.endpointUrl}${this.getAllRunsEndpoint}`);
             var req = request(
@@ -231,6 +253,7 @@ export class Run {
                     path: `${this.getAllRunsEndpoint}`,
                     method: 'POST',
                     headers: reqHeaders,
+                    port: reqPort
                 },
                 response => {
                     try {
@@ -284,9 +307,9 @@ export class Run {
 
     public async getRunID() {
         try {
-            var url = `${this.endpointUrl}${this.getAllRunsEndpoint}?resource_key.type=PIPELINE_VERSION&resource_key.id=${this.pipelineVersionID}&filter={"predicates":[{"key":"name","op":"EQUALS","string_value":"${this.runName}"}]}&sort_by=created_at desc`;
+            var url = `${this.endpointUrl}${this.getAllRunsEndpoint}?resource_reference_key.type=NAMESPACE&resource_reference_key.id=${this.namespace}&filter={"predicates":[{"key":"name","op":"EQUALS","string_value":"${this.runName}"}]}&sort_by=created_at desc`;
             url = encodeURI(url);
-            var options: rest.IRequestOptions = { additionalHeaders: { 'authorization': `Bearer ${this.bearerToken}` } };
+            var options: rest.IRequestOptions = { additionalHeaders: this.getAuthenticationHeader() };
             task.debug(`Getting run id from ${url}`);
             var webRequest = await this.restAPIClient.get<IAllRun>(url, options)!;
             if (webRequest.result != null) {
@@ -308,7 +331,7 @@ export class Run {
     public async getRunStatus() {
         try {
             var url = `${this.endpointUrl}${this.getAllRunsEndpoint}/${this.runID}`;
-            var options: rest.IRequestOptions = { additionalHeaders: { 'authorization': `Bearer ${this.bearerToken}` } };
+            var options: rest.IRequestOptions = { additionalHeaders: this.getAuthenticationHeader() };
             task.debug(`Getting run status from ${url}`);
             var webRequest = await this.restAPIClient.get<ISingleRun>(url, options)!;
             if (webRequest.result != null) {
@@ -330,7 +353,7 @@ export class Run {
         try {
             var url = `${this.endpointUrl}${this.getAllPipelinesEndpoint}?filter={"predicates":[{"key":"name","op":"EQUALS","string_value":"${this.pipeline}"}]}`;
             url = encodeURI(url);
-            var options: rest.IRequestOptions = { additionalHeaders: { 'authorization': `Bearer ${this.bearerToken}` } };
+            var options: rest.IRequestOptions = { additionalHeaders: this.getAuthenticationHeader() };
             task.debug(`Getting pipeline id from ${url}`);
             var webRequest = await this.restAPIClient.get<IAllPipeline>(url, options)!;
             if (webRequest.result != null) {
@@ -353,7 +376,7 @@ export class Run {
         try {
             var url = `${this.endpointUrl}${this.getAllVersionsEndpoint}?page_size=100&resource_key.type=PIPELINE_VERSION&resource_key.id=${this.pipelineID}&filter={"predicates":[{"key":"name","op":"EQUALS","string_value":"${this.pipelineVersion}"}]}`;
             url = encodeURI(url);
-            var options: rest.IRequestOptions = { additionalHeaders: { 'authorization': `Bearer ${this.bearerToken}` } };
+            var options: rest.IRequestOptions = { additionalHeaders: this.getAuthenticationHeader() };
             task.debug(`Getting pipeline version id from ${url}`);
             var webRequest = await this.restAPIClient.get<IAllPipelineVersion>(url, options)!;
             if (webRequest.result != null) {
@@ -381,9 +404,9 @@ export class Run {
 
     public async getExperimentID(): Promise<string> {
         try {
-            var url = `${this.endpointUrl}${this.getAllExperimentsEndpoint}?filter={"predicates":[{"key":"name","op":"EQUALS","string_value":"${this.experimentName}"}]}`;
+            var url = `${this.endpointUrl}${this.getAllExperimentsEndpoint}?resource_reference_key.type=NAMESPACE&resource_reference_key.id=${this.namespace}&filter={"predicates":[{"key":"name","op":"EQUALS","string_value":"${this.experimentName}"}]}`;
             url = encodeURI(url);
-            var options: rest.IRequestOptions = { additionalHeaders: { 'authorization': `Bearer ${this.bearerToken}` } };
+            var options: rest.IRequestOptions = { additionalHeaders: this.getAuthenticationHeader() };
             task.debug(`Getting experiment id from ${url}`);
             var webRequest = await this.restAPIClient.get<IAllExperiment>(url, options)!;
             if (webRequest.result != null) {
